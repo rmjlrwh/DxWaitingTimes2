@@ -79,6 +79,8 @@ for (test in all_tests) {
     mutate(YearMonth = factor(YearMonth, levels = c(ref_prev, ref_latest)))
   
   ## ── Observed ────────────────────────────────────────────────────────
+  
+  # Format variables
   observed <- dat %>%
     mutate(
       probability = Count / Denominator, 
@@ -87,7 +89,11 @@ for (test in all_tests) {
     select(TestName, NHSCode_PostMerge, Timeperiod, YearMonth, Count, Denominator, probability)
   
   observed_log <- observed |>
-    mutate(probability_log = qlogis(probability)) |>
+    
+    #transform indicator to log odds scale
+    mutate(probability_log = qlogis(probability)) |> 
+    
+    # continuity correction to produce approximate values on the log-odds scale
     mutate(probability_log = case_when(
       Count == 0   ~ qlogis(0.5 / Denominator),
       TRUE         ~ probability_log
@@ -97,6 +103,7 @@ for (test in all_tests) {
       TRUE             ~ probability_log
     ))
   
+  # Extract summary statistics for observed indicator on log-odds scale
   obs_log_summary <- observed_log %>%
     group_by(YearMonth, Timeperiod) %>%
     summarise(
@@ -106,6 +113,8 @@ for (test in all_tests) {
       .groups = "drop"
     )
   
+  # Use summary statistics to extract 25th and 75th percentiles
+  # Also convert back to natural scale
   obs_pctiles <- observed_log %>%
     group_by(YearMonth, Timeperiod) %>%
     summarise(
@@ -115,12 +124,15 @@ for (test in all_tests) {
     )
   
   ## ── Models ──────────────────────────────────────────────────────────
+  
+  # Run models
   model <- glmer(
     cbind(Count, Denominator - Count) ~ YearMonth + (YearMonth | NHSCode_PostMerge),
     family = binomial,
     data   = dat
   )
   
+  # Reversed model is used just to generate CIs around the random effect SD in the later month
   model_reversed <- glmer(
     cbind(Count, Denominator - Count) ~ YearMonth + (YearMonth | NHSCode_PostMerge),
     family = binomial,
@@ -132,24 +144,38 @@ for (test in all_tests) {
   all_models_reversed[[test]] <- model_reversed
   
   ## ── Variance-covariance & fixed effects ─────────────────────────────
+  
+  # Extract model estimates for later
   vc       <- as.matrix(VarCorr(model)$NHSCode_PostMerge)
   fixef_   <- fixef(model)
   time_effect <- names(fixef_)[2]
   
+  # Extract intercept (mean logit) for previous month
   mean_logit_prev   <- fixef_["(Intercept)"]
+  
+  # Extract intercept (mean logit) for latest month
   mean_logit_latest <- fixef_["(Intercept)"] + fixef_[time_effect]
   
+  # Variance for previous month
   var_prev <- vc["(Intercept)", "(Intercept)"]
+  
+  # Variance for later month =
+      # variance in previous month 
+      #+ random slope variance (how much variance changes by latest month) 
+      # + 2 x random intercept-slope covariance
   var_latest <- vc["(Intercept)", "(Intercept)"] +
     vc[time_effect, time_effect] +
     2 * vc["(Intercept)", time_effect]
   
+  # SD for previous month
   sd_prev <- sqrt(var_prev)
+  
+  # SD for latest month
   sd_latest <- sqrt(var_latest)
   
   ## ── SD confidence intervals ─────────────────────────────────────────
-  model_re_cis          <- confint(model,          method = "profile", oldNames = FALSE)
-  model_reversed_re_cis <- confint(model_reversed, method = "profile", oldNames = FALSE)
+    model_re_cis          <- confint(model,          method = "boot", oldNames = FALSE)
+  model_reversed_re_cis <- confint(model_reversed, method = "boot", oldNames = FALSE)
   
   sd_prev_lb <- model_re_cis[1, 1]
   sd_prev_ub <- model_re_cis[1, 2]
@@ -157,10 +183,17 @@ for (test in all_tests) {
   sd_latest_ub <- model_reversed_re_cis[1, 2]
   
   ## ── Percentile range results ─────────────────────────────────────────
+  
+  # Calculate modelled 25th and 75th percentiles
+  # Using SD (e.g. sd_prev) + intercept (mean_logit_prev)
   range_results <- tibble(
     pctile     = c(0.25, 0.75),
+    
+    # On logit scale
     logit_prev = (qnorm(pctile) * sd_prev) + mean_logit_prev,
     logit_latest = (qnorm(pctile) * sd_latest) + mean_logit_latest,
+    
+    # On proportion/ natural scale
     perc_prev    = plogis(logit_prev),
     perc_latest    = plogis(logit_latest)
   )
@@ -297,6 +330,7 @@ for (test in all_tests) {
     mutate(YearMonth = factor(as.character(YearMonth), levels = c(ref_prev, ref_latest))) %>%
     droplevels()
   
+  # Create observed density data frame
   observed_test <- dat %>%
     mutate(
       probability = Count / Denominator,
@@ -305,19 +339,31 @@ for (test in all_tests) {
         YearMonth == ref_latest ~ label_latest)
     )
   
+  # Filter modelled results to test and month of interest
   mod_row_prev <- modelled_results |> filter(test == !!test, YearMonth == ref_prev)
   mod_row_latest <- modelled_results |> filter(test == !!test, YearMonth == ref_latest)
   
-  if (nrow(mod_row_prev) == 0 | nrow(mod_row_latest) == 0) next
-  
+  # Create modelled density for histogram, by test and previous vs latest month
   make_density_df <- function(mean_logit, sd) {
+    
+    # set up variable containg equally space points 1-1000 in proportion space 
     tibble(density_x = (1:1000) / 1000) |>
       mutate(
+        
+        # Convert density points onto log odds scale
         density_x_log = qlogis(density_x),
+        
+        # *calculate PDF for these points on log-odds scale using the intercept (mean_logit) and 
+        # standard deviation of the random effect from the mixed model
         density_log   = dnorm(density_x_log, mean = mean_logit, sd = sd),
+        
+        # scale these values to account for the fact that points are 
+        # differently spaced on the proportion scale
         density       = density_log *
           (exp(-2 * density_x_log) + (2 * exp(-density_x_log)) + 1) /
           exp(-density_x_log),
+        
+        # scale x-values and density by 100 to move from proportion to percentage
         density_x     = density_x * 100,
         density       = density / 100
       )
@@ -326,7 +372,10 @@ for (test in all_tests) {
   density_prev <- make_density_df(mod_row_prev$mean_logit, mod_row_prev$sd_logit)
   density_latest <- make_density_df(mod_row_latest$mean_logit, mod_row_latest$sd_logit)
   
+  # Histogram for previous month
   plots_hist_prev[[test]] <- ggplot() +
+    
+    # Observed density
     geom_histogram(
       data     = observed_test |> filter(Timeperiod == label_prev),
       aes(
@@ -338,6 +387,8 @@ for (test in all_tests) {
       binwidth = 4,
       colour   = "white"
     ) +
+    
+    # Modelled density
     geom_line(
       data = density_prev |> filter(density_x < 80),
       aes(
@@ -359,7 +410,7 @@ for (test in all_tests) {
     theme_minimal() +
     theme(legend.position = "bottom")
   
-  
+  # Histogram for latest month
   plots_hist_latest[[test]] <- ggplot() +
     geom_histogram(
       data     = observed_test |> filter(Timeperiod == label_latest),
@@ -477,6 +528,7 @@ for (test in all_tests) {
   
   ## ------------------------------------------------------------------
   ## Predictions ONLY on that test's data
+  # Using marginaleffects::predictions
   newdf <- predictions(
     model,
     newdata = dat,     #
@@ -497,12 +549,9 @@ for (test in all_tests) {
       Observed_Denominator = Denominator
     ) 
   
-  
-  
-  
-  
   ## ------------------------------------------------------------------
   ## Create ranking based ONLY on previous (same month a year ago)
+  # This will be used to rank observations in a then vs now comparison graph later
   rank_prev <- newdf |>
     filter(Timeperiod == ref_prev) |>
     arrange(desc(Predicted_prob)) |>
@@ -538,6 +587,8 @@ for (test in all_tests) {
   
   ## ------------------------------------------------------------------
   ## Comparisons
+  # Compare previous vs latest month using marginaleffects::comparisons
+  # Although not explicitly spcified, this generates P Values for the comparison
   compare <- comparisons(
     model,
     variables = list(YearMonth = c(ref_prev, ref_latest)),
@@ -550,16 +601,10 @@ for (test in all_tests) {
       Predicted_diff_ucl = conf.high
     )
   
-  compare1 <- compare |>
-    left_join(
-      newdf |>
-        filter(YearMonth == ref_prev) |>
-        select(NHSCode_PostMerge, Predicted_prob, Predicted_lcl, Predicted_ucl),
-      by = "NHSCode_PostMerge"
-    )
-  
+
   ## ------------------------------------------------------------------
-  ## Store compare2
+  ##
+  # Join comparisons into actual predictions data frame
   compare2 <- newdf |>
     select(TestName, NHSCode_PostMerge, Timeperiod,
            Predicted_prob, Predicted_lcl, Predicted_ucl,
@@ -581,6 +626,9 @@ save(all_compare2_df, file = file.path(data_out,"compare2.RData"))
 
 
 ## #####################################################################
+
+## Patchwork of previous vs current month predictions plots
+
 ## Patchwork of plot p — imaging
 patchwork_p_imaging <- wrap_plots(plots_p[imaging_tests], ncol = 2) +
   plot_layout(guides = "collect") +  
@@ -898,5 +946,35 @@ write_list_to_xlsx(
   path = file.path(output, "all_results_combined.xlsx")
 )
 
+
+## ##########################################################
+# Useful code
+
+# View available models
+names(all_models)
+
+# View specific model
+model_gastroscopy <- all_models[["Gastroscopy"]]
+summary(model_gastroscopy)
+
+
+## Log warnings
+
+log_con <- file("warnings_log.txt", open = "wt")
+
+for (test in all_tests) {
+  withCallingHandlers(
+    {
+      model <- glmer(...)
+    },
+    warning = function(w) {
+      msg <- paste("Test:", test, "|", conditionMessage(w))
+      writeLines(msg, log_con)
+      invokeRestart("muffleWarning")
+    }
+  )
+}
+
+close(log_con)
 
 
