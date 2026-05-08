@@ -10,8 +10,20 @@ library(patchwork)
 
 source("R/config.R")
 
+## #####################################################################
+
+# Define comparison months- Current Month vs Same month previous year
+# This is done by referencing the params files
+# params = main analsyis, params_sensitivity for the sensitivity analysis
+
+source("R/params.R")  # swap to params_sensitivity.R for the sensitivity run
+# source("R/params_sensitivity.R")  # swap to params_sensitivity.R for the sensitivity run
+
+
+## #####################################################################
+
 # Load data
-load(file.path(data_out, "compare2.RData"))
+load(file.path(data_out, paste0(run_label,"_compare2.RData")))
 
 # Load sub icb boundaries
 sub_icb_boundaries <- st_read(file.path(data_dir,"Sub_Integrated_Care_Board_Locations_April_2023_EN_BSC_-5867181813749012508 (1)/SICBL_APR_2023_EN_BSC.shp"))
@@ -19,11 +31,6 @@ sub_icb_boundaries <- st_read(file.path(data_dir,"Sub_Integrated_Care_Board_Loca
 
 ## #####################################################################
 # Define comparison months
-latest_month    <- floor_date(max(as.Date(paste0(
-  str_replace(unique(all_compare2_df$Timeperiod), "_", "-"), "-01")),
-  na.rm = TRUE), "month")
-prev_year_month <- latest_month %m-% years(1)
-
 comparison_months  <- c(latest_month, prev_year_month)
 comparison_labels  <- format(comparison_months, "%Y-%m")
 

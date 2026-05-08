@@ -28,11 +28,21 @@ prev_year_month <- latest_month %m-% years(1)
 comparison_months <- c(latest_month, prev_year_month)
 comparison_labels <- format(comparison_months, "%Y-%m")
 
+## #####################################################################
+
+# Run functions file, which depends on definition of comparison months above
+# Includes functions run across multiple R code files e.g. labels and excel exports
+source("R/functions.R")
+
+
+
+## #####################################################################
+
 # Filter table
 data_2month <- icb_combined_mergers_alldx |>
   mutate(YearMonth = format(Date, "%Y-%m")) |>
   filter(YearMonth %in% comparison_labels)
-  
+
 
 ## #####################################################################
 # # Format factor vars
@@ -70,7 +80,8 @@ modelled_results_list  <- list()
 obs_vs_mod_list        <- list()
 model_params_list      <- list()
 all_models             <- list()
-all_models_reversed    <- list()
+
+n_boot <- 1000
 
 for (test in all_tests) {
   
@@ -84,8 +95,8 @@ for (test in all_tests) {
   observed <- dat %>%
     mutate(
       probability = Count / Denominator, 
-        Timeperiod = format(ymd(paste0(YearMonth, "-01")), "%b_%Y")
-        ) %>%
+      Timeperiod = format(ymd(paste0(YearMonth, "-01")), "%b_%Y")
+    ) %>%
     select(TestName, NHSCode_PostMerge, Timeperiod, YearMonth, Count, Denominator, probability)
   
   observed_log <- observed |>
@@ -125,29 +136,18 @@ for (test in all_tests) {
   
   ## ── Models ──────────────────────────────────────────────────────────
   
-  # Run models
   model <- glmer(
     cbind(Count, Denominator - Count) ~ YearMonth + (YearMonth | NHSCode_PostMerge),
     family = binomial,
     data   = dat
   )
   
-  # Reversed model is used just to generate CIs around the random effect SD in the later month
-  model_reversed <- glmer(
-    cbind(Count, Denominator - Count) ~ YearMonth + (YearMonth | NHSCode_PostMerge),
-    family = binomial,
-    data   = dat %>% mutate(YearMonth = relevel(YearMonth, ref = ref_latest))
-  )
-  
-  # Store models for later use in predictions/comparisons
-  all_models[[test]]          <- model
-  all_models_reversed[[test]] <- model_reversed
+  all_models[[test]] <- model
   
   ## ── Variance-covariance & fixed effects ─────────────────────────────
   
-  # Extract model estimates for later
-  vc       <- as.matrix(VarCorr(model)$NHSCode_PostMerge)
-  fixef_   <- fixef(model)
+  vc          <- as.matrix(VarCorr(model)$NHSCode_PostMerge)
+  fixef_      <- fixef(model)
   time_effect <- names(fixef_)[2]
   
   # Extract intercept (mean logit) for previous month
@@ -160,42 +160,96 @@ for (test in all_tests) {
   var_prev <- vc["(Intercept)", "(Intercept)"]
   
   # Variance for later month =
-      # variance in previous month 
-      #+ random slope variance (how much variance changes by latest month) 
-      # + 2 x random intercept-slope covariance
+  # variance in previous month 
+  #+ random slope variance (how much variance changes by latest month) 
+  # + 2 x random intercept-slope covariance
   var_latest <- vc["(Intercept)", "(Intercept)"] +
     vc[time_effect, time_effect] +
     2 * vc["(Intercept)", time_effect]
   
   # SD for previous month
-  sd_prev <- sqrt(var_prev)
+  sd_prev   <- sqrt(var_prev)
   
   # SD for latest month
   sd_latest <- sqrt(var_latest)
   
-  ## ── SD confidence intervals ─────────────────────────────────────────
-    model_re_cis          <- confint(model,          method = "boot", oldNames = FALSE)
-  model_reversed_re_cis <- confint(model_reversed, method = "boot", oldNames = FALSE)
+  # Difference in SD
+  sd_diff   <- sd_latest - sd_prev
   
-  sd_prev_lb <- model_re_cis[1, 1]
-  sd_prev_ub <- model_re_cis[1, 2]
-  sd_latest_lb <- model_reversed_re_cis[1, 1]
-  sd_latest_ub <- model_reversed_re_cis[1, 2]
   
+  ## ── Bootstrap CIs for SD difference ─────────────────────────────────
+  
+  ids   <- unique(dat$NHSCode_PostMerge)
+  n_ids <- length(ids)
+  
+  boot_sd_diffs <- numeric(n_boot)
+  
+  for (b in seq_len(n_boot)) {
+    
+    # Sample IDs with replacement. Sampling total number of subicbs in dataset (106) using n_ids
+    sampled_ids <- sample(ids, size = n_ids, replace = TRUE)
+  
+    # Build bootstrapped dataset, using sampled IDs
+    # relabelling so duplicated IDs are treated as distinct sub-ICBs
+    boot_dat <- map_dfr(seq_along(sampled_ids), function(i) {
+      dat |>
+        filter(NHSCode_PostMerge == sampled_ids[i]) |>
+        mutate(NHSCode_PostMerge = factor(paste0("boot_", i)))
+    })
+  
+    # Refit model on bootstrapped sample
+    boot_model <- glmer(
+      cbind(Count, Denominator - Count) ~ YearMonth + (YearMonth | NHSCode_PostMerge),
+      family = binomial,
+      data   = boot_dat
+    )
+    
+    # Extract SDs and their difference from the bootstrapped model
+    boot_vc          <- as.matrix(VarCorr(boot_model)$NHSCode_PostMerge)
+    boot_time_effect <- names(fixef(boot_model))[2]
+    
+    boot_var_prev   <- boot_vc["(Intercept)", "(Intercept)"]
+    boot_var_latest <- boot_vc["(Intercept)", "(Intercept)"] +
+      boot_vc[boot_time_effect, boot_time_effect] +
+      2 * boot_vc["(Intercept)", boot_time_effect]
+    
+    boot_sd_prev   <- sqrt(boot_var_prev)
+    boot_sd_latest <- sqrt(boot_var_latest)
+    
+    # Creates list of differences in SDs from each boostrapping round
+    # nb [b] references the var name in the forloop header
+    boot_sd_diffs[b] <- boot_sd_latest - boot_sd_prev
+    
+  }
+  
+  # SD of bootstrap differences = standard error of bootstrapped differences between SDs in prev month vs latest
+  se_sd_diff <- sd(boot_sd_diffs)
+  
+  # 95% CI using normal distribution
+  ci_lower <- sd_diff - qnorm(0.975) * se_sd_diff
+  ci_upper <- sd_diff + qnorm(0.975) * se_sd_diff
+  
+  # z_stat = difference in SDs in actual dataset / standard error for the SDs from the bootstrapping
+  # Converts difference in SDs into standard errors away from zero
+  # If z_stat = 0, no change
+  z_stat  <- sd_diff / se_sd_diff
+  
+  # Draw normal distribution of z_stat to create p value
+  # probability of getting a z score that extreme by chance
+  # 2 sided (hence -abs to make all values positive)
+  p_value <- 2 * pnorm(-abs(z_stat))
+  
+
   ## ── Percentile range results ─────────────────────────────────────────
   
-  # Calculate modelled 25th and 75th percentiles
-  # Using SD (e.g. sd_prev) + intercept (mean_logit_prev)
   range_results <- tibble(
     pctile     = c(0.25, 0.75),
     
-    # On logit scale
-    logit_prev = (qnorm(pctile) * sd_prev) + mean_logit_prev,
-    logit_latest = (qnorm(pctile) * sd_latest) + mean_logit_latest,
+    logit_prev   = (qnorm(pctile) * sd_prev)   + mean_logit_prev,
+    logit_latest = (qnorm(pctile) * sd_latest)  + mean_logit_latest,
     
-    # On proportion/ natural scale
     perc_prev    = plogis(logit_prev),
-    perc_latest    = plogis(logit_latest)
+    perc_latest  = plogis(logit_latest)
   )
   
   p25 <- range_results |> filter(pctile == 0.25)
@@ -207,30 +261,32 @@ for (test in all_tests) {
     fixef_timeperiod_logit = round(fixef_[time_effect],                                                                3),
     fixef_timeperiod_OR    = round(exp(fixef_[time_effect]),                                                           3),
     fixef_timeperiod_pval  = round(summary(model)$coefficients[time_effect, "Pr(>|z|)"],                              3),
-    re_intercept_variance  = round(vc["(Intercept)", "(Intercept)"],                                                3),
-    re_slope_variance      = round(vc[time_effect, time_effect],                                                          3),
+    re_intercept_variance  = round(vc["(Intercept)", "(Intercept)"],                                                   3),
+    re_slope_variance      = round(vc[time_effect, time_effect],                                                       3),
     re_intercept_slope_cov = round(vc["(Intercept)", time_effect],                                                     3),
     re_intercept_slope_cor = round(vc["(Intercept)", time_effect] /
-                                     sqrt(vc["(Intercept)", "(Intercept)"] * vc[time_effect, time_effect]),                     3)
+                                     sqrt(vc["(Intercept)", "(Intercept)"] * vc[time_effect, time_effect]),            3)
   )
   
   ## ── Modelled results rows ────────────────────────────────────────────
   modelled_results_list[[test]] <- tibble(
     test        = test,
-    YearMonth = c(ref_prev, ref_latest),
-    mean_logit     = round(c(mean_logit_prev, mean_logit_latest), 2),
-    variance_logit = round(c(var_prev,        var_latest),        2),
-    sd_logit       = round(c(sd_prev,         sd_latest),         2),
-    sd_lower_bound = round(c(sd_prev_lb,         sd_latest_lb),         2),
-    sd_upper_bound = round(c(sd_prev_ub,         sd_latest_ub),         2),
-    pct25          = round(c(p25$perc_prev,   p25$perc_latest)  * 100, 2),
-    pct75          = round(c(p75$perc_prev,   p75$perc_latest)  * 100, 2),
+    YearMonth   = c(ref_prev,      ref_latest),
+    mean_logit  = round(c(mean_logit_prev,  mean_logit_latest), 2),
+    variance_logit = round(c(var_prev,      var_latest),        2),
+    sd_logit    = round(c(sd_prev,          sd_latest),         2),
+    sd_diff     = round(c(sd_diff,         sd_diff),           4),
+    sd_diff_lower_95 = round(c(ci_lower,    ci_lower),          4),
+    sd_diff_upper_95 = round(c(ci_upper,    ci_upper),          4),
+    sd_diff_pvalue   = round(c(p_value,    p_value),           4),
+    pct25       = round(c(p25$perc_prev,    p25$perc_latest) * 100, 2),
+    pct75       = round(c(p75$perc_prev,    p75$perc_latest) * 100, 2),
   )
   
   ## ── Observed vs modelled rows ────────────────────────────────────────
-  obs_perc    <- obs_pctiles     |> filter(YearMonth == ref_prev)
-  obs_latest    <- obs_pctiles     |> filter(YearMonth == ref_latest)
-  obs_sum_prev <- obs_log_summary |> filter(YearMonth == ref_prev)
+  obs_perc       <- obs_pctiles     |> filter(YearMonth == ref_prev)
+  obs_latest     <- obs_pctiles     |> filter(YearMonth == ref_latest)
+  obs_sum_prev   <- obs_log_summary |> filter(YearMonth == ref_prev)
   obs_sum_latest <- obs_log_summary |> filter(YearMonth == ref_latest)
   
   obs_vs_mod_list[[test]] <- tibble(
@@ -253,7 +309,6 @@ for (test in all_tests) {
 }
 
 saveRDS(all_models, file = file.path(data_out,"all_models_auto.RData"))
-saveRDS(all_models_reversed, file = file.path(data_out,"all_models_reversed_auto.RData"))
 
 
 ## #####################################################################
@@ -263,6 +318,7 @@ modelled_results <- bind_rows(modelled_results_list)
 obs_vs_modelled  <- bind_rows(obs_vs_mod_list)
 model_params     <- bind_rows(model_params_list)
 
+
 ## #################################################################
 ## Format modelled prev vs latest comparison
 
@@ -271,23 +327,36 @@ modelled_results_table <- modelled_results |>
     id_cols     = c(test),
     names_from  = YearMonth,
     values_from = c(
-      mean_logit, variance_logit, sd_logit, 
-      sd_lower_bound, sd_upper_bound,
+      mean_logit,
+      variance_logit,
+      sd_logit,
+      sd_diff,
+      sd_diff_lower_95,
+      sd_diff_upper_95,
+      sd_diff_pvalue,
       pct25,
-      pct75),
+      pct75
+    ),
     names_glue  = "{.value} ({YearMonth})"
-  ) 
+  )
 
-
-# Order columns so Preivous Year come first
+# Order columns so previous year comes first
 modelled_results_table <- modelled_results_table |>
   select(
     test,
-    # Previous year columns first
     contains(paste0("(", comparison_labels[2], ")")),
-    # Then latest month columns
-    contains(paste0("(", comparison_labels[1], ")"))
+    contains(paste0("(", comparison_labels[1], ")")),
+    contains("sd_diff")
   )
+
+# Keep just the sd diff for one time period and rename
+modelled_results_table <- modelled_results_table |>
+  select(-which(
+    str_detect(names(modelled_results_table), paste0("(", comparison_labels[2], ")")) 
+    & str_detect(names(modelled_results_table), "sd_diff")))
+
+
+
 
 ## #################################################################
 ## Format obs vs modelled tables
@@ -791,144 +860,8 @@ results_table2_with_model <- main_results_table2 |>
 load(file.path(output, "appendix_table.RData"))
 
 
-## #####################################################################
-# Define variable labels
-# Global definition that can be applied depending on what variables are there
 
 
-var_labels <- c(
-  test           = "Diagnostic test name",
-  YearMonth      = "Time period",
-  
-  # ---- Observed vs modelled ----
-  obs_mean_logit     = "Observed mean (log-odds scale)",
-  obs_variance_logit = "Observed variance (log-odds scale)",
-  obs_sd_logit       = "Observed SD (log-odds scale)",
-  obs_pct25          = "Observed 25th percentile (%)",
-  obs_pct75          = "Observed 75th percentile (%)",
-  
-  mod_mean_logit     = "Modelled mean (log-odds scale)",
-  mod_variance_logit = "Modelled variance (log-odds scale)",
-  mod_sd_logit       = "Modelled SD (log-odds scale)",
-  mod_pct25          = "Modelled 25th percentile (%)",
-  mod_pct75          = "Modelled 75th percentile (%)",
-  
-  # ---- Fold differences ----
-  obs_fold_diff = "Observed fold difference (75th / 25th percentile)",
-  mod_fold_diff = "Modelled fold difference (75th / 25th percentile)",
-  
-  # ---- Model parameters ----
-  fixef_timeperiod_logit = "Fixed effect for current month (log-odds)",
-  fixef_timeperiod_OR    = "Fixed effect for current month (odds ratio)",
-  fixef_timeperiod_pval  = "P-value for fixed effect",
-  
-  re_intercept_variance  = "Random effect variance: intercept",
-  re_slope_variance      = "Random effect variance: time slope",
-  re_intercept_slope_cov = "Covariance between random intercept and time slope",
-  re_intercept_slope_cor = "Correlation between random intercept and time slope", 
-  
-  # ---- Labels for predicted sub icb results -------
-                NHSCode_PostMerge = "Local area",
-                AreaName_PostMerge = "Local area name",
-                
-                Observed_Count = "Observed count",
-                Observed_Denominator = "Observed denominator",
-                
-                Predicted_diff     = "Absolute change (modelled)",
-                Predicted_diff_lcl = "Lower CI (change)",
-                Predicted_diff_ucl = "Upper CI (change)",
-                p.value            = "P-value for time period comparison"
-)
-
-
-# ---- Dynamically add observed & predicted labels by month ----
-for (m in comparison_labels) {
-  
-  m_nice <- format(ymd(paste0(m, "-01")), "%b %Y")
-  
-  # Observed
-  var_labels[paste0("Observed_prob (", m, ")")]        <- paste0("Observed % — ", m_nice)
-  var_labels[paste0("Observed_lcl (", m, ")")]         <- paste0("Observed lower CI — ", m_nice)
-  var_labels[paste0("Observed_ucl (", m, ")")]         <- paste0("Observed upper CI — ", m_nice)
-  var_labels[paste0("Observed_Count (", m, ")")]       <- paste0("Observed count — ", m_nice)
-  var_labels[paste0("Observed_Denominator (", m, ")")] <- paste0("Observed denominator — ", m_nice)
-  
-  # Modelled (Predicted)
-  var_labels[paste0("Predicted_prob (", m, ")")] <- paste0("Modelled % — ", m_nice)
-  var_labels[paste0("Predicted_lcl (", m, ")")]  <- paste0("Modelled lower CI — ", m_nice)
-  var_labels[paste0("Predicted_ucl (", m, ")")]  <- paste0("Modelled upper CI — ", m_nice)
-}
-
-# ---- Dynamically add modelled results labels ----
-for (m in comparison_labels) {
-  
-  m_nice <- format(ymd(paste0(m, "-01")), "%b %Y")
-  
-  # Core stats
-  var_labels[paste0("mean_logit (", m, ")")]     <- paste("Mean (log-odds scale) —", m_nice)
-  var_labels[paste0("variance_logit (", m, ")")] <- paste("Variance (log-odds scale) —", m_nice)
-  var_labels[paste0("sd_logit (", m, ")")]       <- paste("SD (log-odds scale) —", m_nice)
-  
-  # SD CI
-  var_labels[paste0("sd_lower_bound (", m, ")")] <- paste("SD lower bound (95% CI) —", m_nice)
-  var_labels[paste0("sd_upper_bound (", m, ")")] <- paste("SD upper bound (95% CI) —", m_nice)
-  
-  # Percentiles
-  var_labels[paste0("pct25 (", m, ")")]    <- paste("25th percentile (%) —", m_nice)
-  
-  var_labels[paste0("pct75 (", m, ")")]    <- paste("75th percentile (%) —", m_nice)
-}
-
-
-
-## #####################################################################
-# Helper: write data frame to xlsx with a styled label row above the data
-
-write_list_to_xlsx <- function(dfs, path, labels_dict = var_labels) {
-  
-  wb <- createWorkbook()
-  
-  label_style <- createStyle(
-    fontColour     = "#000000",
-    fgFill         = "#DCE6F1",
-    textDecoration = "bold",
-    wrapText       = TRUE,
-    valign         = "top",
-    border         = "Bottom",
-    borderColour   = "#4472C4"
-  )
-  
-  for (sheet_name in names(dfs)) {
-    
-    df <- dfs[[sheet_name]]
-    rownames(df) <- NULL
-    
-    addWorksheet(wb, sheet_name)
-    
-    labels <- setNames(
-      ifelse(names(df) %in% names(labels_dict),
-             labels_dict[names(df)],
-             names(df)),
-      names(df)
-    )
-    
-    labels[is.na(labels)] <- names(df)
-    
-    label_row <- as.data.frame(as.list(labels), stringsAsFactors = FALSE)
-    names(label_row) <- names(df)
-    
-    writeData(wb, sheet_name, label_row, startRow = 1, colNames = FALSE, rowNames = FALSE)
-    writeData(wb, sheet_name, df,        startRow = 2, colNames = FALSE, rowNames = FALSE)
-    
-    addStyle(wb, sheet_name, label_style,
-             rows = 1, cols = seq_along(df), gridExpand = TRUE)
-    
-    setColWidths(wb, sheet_name, cols = seq_along(df), widths = "auto")
-    freezePane(wb, sheet_name, firstActiveRow = 2)
-  }
-  
-  saveWorkbook(wb, path, overwrite = TRUE)
-}
 
 ## #####################################################################
 # Export
@@ -943,7 +876,7 @@ write_list_to_xlsx(
     "National results - appendix" = appendix_table, 
     "Appendix - local predictions"     = appendix_subicb
   ),
-  path = file.path(output, "all_results_combined.xlsx")
+  path = file.path(output, "all_results_combined2.xlsx")
 )
 
 
@@ -956,25 +889,4 @@ names(all_models)
 # View specific model
 model_gastroscopy <- all_models[["Gastroscopy"]]
 summary(model_gastroscopy)
-
-
-## Log warnings
-
-log_con <- file("warnings_log.txt", open = "wt")
-
-for (test in all_tests) {
-  withCallingHandlers(
-    {
-      model <- glmer(...)
-    },
-    warning = function(w) {
-      msg <- paste("Test:", test, "|", conditionMessage(w))
-      writeLines(msg, log_con)
-      invokeRestart("muffleWarning")
-    }
-  )
-}
-
-close(log_con)
-
 
