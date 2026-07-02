@@ -18,8 +18,8 @@ source("R/config.R")
 # This is done by referencing the params files
 # params = main analsyis, params_sensitivity for the sensitivity analysis
 
-source("R/params.R")  # swap to params_sensitivity.R for the sensitivity run
-# source("R/params_sensitivity.R")  # swap to params_sensitivity.R for the sensitivity run
+#source("R/params.R")  # swap to params_sensitivity.R for the sensitivity run
+ source("R/params_sensitivity.R")  # swap to params_sensitivity.R for the sensitivity run
 
 ## #####################################################################
 
@@ -166,9 +166,9 @@ for (test in all_tests) {
   var_prev <- vc["(Intercept)", "(Intercept)"]
   
   # Variance for later month =
-  # variance in previous month 
-  #+ random slope variance (how much variance changes by latest month) 
-  # + 2 x random intercept-slope covariance
+  #   variance in previous month (baseline spread across Sub-ICBs)
+  # + variance of the random slope (spread of Sub-ICB deviations from the national trend)
+  # + 2 x covariance between random intercept and slope (whether starting position predicts divergence)
   var_latest <- vc["(Intercept)", "(Intercept)"] +
     vc[time_effect, time_effect] +
     2 * vc["(Intercept)", time_effect]

@@ -43,16 +43,7 @@ icb_combined_mergers_alldx <- icb_combined_mergers_alldx %>%
            str_replace("^Mri$", "MRI") %>%
            str_replace("Flexi.*", "Flexible Sigmoidoscopy")
   ) %>%
-  mutate(TestName = factor(TestName, levels = c(
-    "MRI",
-    "Gastroscopy",
-    "CT",
-    "Flexible Sigmoidoscopy",
-    "Non Obstetric Ultrasound",
-    "Colonoscopy",
-    "Echocardiography",
-    "Cystoscopy"
-  )))
+mutate(TestName = factor(TestName, levels = test_order))
 
 # Filter just to 6 weeks for this analysis
 icb_combined_mergers_alldx <- icb_combined_mergers_alldx |>
@@ -197,31 +188,19 @@ appendix_table <- icb_combined_mergers_dx_extract %>%
     q75_pct              = round(quantile(Value_pct, 0.75, na.rm = TRUE), 2),
     .groups = "drop"
   ) %>%
-  # Order tests
-  mutate(TestName_order = case_when(
-    TestName == "MRI"                      ~ 1,
-    TestName == "CT"                       ~ 2,
-    TestName == "Non Obstetric Ultrasound" ~ 3,
-    TestName == "Echocardiography"         ~ 4,
-    TestName == "Gastroscopy"              ~ 5,
-    TestName == "Flexible Sigmoidoscopy"   ~ 6,
-    TestName == "Colonoscopy"              ~ 7,
-    TestName == "Cystoscopy"               ~ 8,
-    TRUE ~ 99
-  )) %>%
-  arrange(TestName_order, YearMonth) %>%
+  arrange(YearMonth) %>%
   select(
     TestName, YearMonth,
     national_count, national_denominator, national_prob,
     median_pct, q25_pct, q75_pct, n_icbs
   ) %>%
   rename(
-    "Diagnostic test name"              = TestName,
+    "test"              = TestName,
     "Year-Month"                        = YearMonth,
-    "National count"                    = national_count,
-    "National denominator"              = national_denominator,
+    "National count (waiting ≥6 weeks)"                    = national_count,
+    "National denominator (total waiting)"              = national_denominator,
     "National % (waiting ≥6 weeks)"     = national_prob,
-    "Median local area % (waiting ≥6 wks)" = median_pct,
+    "Median local area % (waiting ≥6 weeks)" = median_pct,
     "25th percentile local area %"         = q25_pct,
     "75th percentile local area %"         = q75_pct,
     "N local areas"                        = n_icbs
@@ -258,11 +237,11 @@ comparison_labels <- format(c(latest_month, prev_year_month), "%Y-%m")
 main_results_table2 <- appendix_table %>%
   filter(`Year-Month` %in% comparison_labels) %>%
   pivot_wider(
-    id_cols     = `Diagnostic test name`,
+    id_cols     = `test`,
     names_from  = `Year-Month`,
-    values_from = c(`National count`, `National denominator`,
+    values_from = c(`National count (waiting ≥6 weeks)`, `National denominator (total waiting)`,
                     `National % (waiting ≥6 weeks)`,
-                    `Median local area % (waiting ≥6 wks)`,
+                    `Median local area % (waiting ≥6 weeks)`,
                     `25th percentile local area %`,
                     `75th percentile local area %`),
     names_glue  = "{.value} ({`Year-Month`})"
@@ -270,7 +249,7 @@ main_results_table2 <- appendix_table %>%
 
 # Order columns: previous year first, then latest month
 col_order2 <- c(
-  "Diagnostic test name",
+  "test",
   grep(paste0("\\(", comparison_labels[2], "\\)"), names(main_results_table2), value = TRUE),
   grep(paste0("\\(", comparison_labels[1], "\\)"), names(main_results_table2), value = TRUE)
 )

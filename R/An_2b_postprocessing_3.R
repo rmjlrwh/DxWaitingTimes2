@@ -17,8 +17,8 @@ source("R/config.R")
 # This is done by referencing the params files
 # params = main analsyis, params_sensitivity for the sensitivity analysis
 
- source("R/params.R")  # swap to params_sensitivity.R for the sensitivity run
-# source("R/params_sensitivity.R")  # swap to params_sensitivity.R for the sensitivity run
+# source("R/params.R")  # swap to params_sensitivity.R for the sensitivity run
+ source("R/params_sensitivity.R")  # swap to params_sensitivity.R for the sensitivity run
 
 
 ## #####################################################################
@@ -547,7 +547,7 @@ write_list_to_xlsx <- function(dfs, path, labels_dict = var_labels) {
 
 
 var_labels <- c(
-  test           = "Diagnostic test name",
+  test           = "Diagnostic test",
   YearMonth      = "Time period",
   
   # ---- Observed vs modelled ----
@@ -581,8 +581,8 @@ var_labels <- c(
   NHSCode_PostMerge = "Local area",
   AreaName_PostMerge = "Local area name",
   
-  Observed_Count = "Observed count",
-  Observed_Denominator = "Observed denominator",
+  Observed_Count = "Observed count (waiting ≥6 weeks)",
+  Observed_Denominator = "Observed denominator (total waiting)",
   
   Predicted_diff     = "Absolute change (modelled)",
   Predicted_diff_lcl = "Lower CI (change)",
@@ -597,14 +597,14 @@ for (m in comparison_labels) {
   m_nice <- format(ymd(paste0(m, "-01")), "%b %Y")
   
   # Observed
-  var_labels[paste0("Observed_prob (", m, ")")]        <- paste0("Observed % — ", m_nice)
+  var_labels[paste0("Observed_prob (", m, ")")]        <- paste0("Observed % (waiting ≥6 weeks)", m_nice)
   var_labels[paste0("Observed_lcl (", m, ")")]         <- paste0("Observed lower CI — ", m_nice)
   var_labels[paste0("Observed_ucl (", m, ")")]         <- paste0("Observed upper CI — ", m_nice)
-  var_labels[paste0("Observed_Count (", m, ")")]       <- paste0("Observed count — ", m_nice)
-  var_labels[paste0("Observed_Denominator (", m, ")")] <- paste0("Observed denominator — ", m_nice)
+  var_labels[paste0("Observed_Count (", m, ")")]       <- paste0("Observed count (waiting ≥6 weeks) — ", m_nice)
+  var_labels[paste0("Observed_Denominator (", m, ")")] <- paste0("Observed denominator (total waiting) — ", m_nice)
   
   # Modelled (Predicted)
-  var_labels[paste0("Predicted_prob (", m, ")")] <- paste0("Modelled % — ", m_nice)
+  var_labels[paste0("Predicted_prob (", m, ")")] <- paste0("Modelled % (waiting ≥6 weeks) — ", m_nice)
   var_labels[paste0("Predicted_lcl (", m, ")")]  <- paste0("Modelled lower CI — ", m_nice)
   var_labels[paste0("Predicted_ucl (", m, ")")]  <- paste0("Modelled upper CI — ", m_nice)
 }
@@ -636,8 +636,8 @@ for (m in comparison_labels) {
 
 load(file.path(output, "main_results_table2.RData"))
 
-main_results_table2 <- main_results_table2 |>
-  rename(test = "Diagnostic test name")
+# main_results_table2 <- main_results_table2 |>
+  # rename(test = "Diagnostic test")
 
 model_params_slim <- model_params |>
   select(test, fixef_timeperiod_OR, fixef_timeperiod_pval)
@@ -653,21 +653,30 @@ load(file.path(output,"appendix_table.RData"))
 
 
 ## #####################################################################
+# Helper: order rows by test (using test_order from config), then by
+# any additional grouping variables supplied in `by`
+
+order_by_test <- function(df, test_col = "test", by = NULL) {
+  df[[test_col]] <- factor(df[[test_col]], levels = test_order_tables)
+  sort_vars <- c(test_col, by)
+  df[do.call(order, lapply(sort_vars, function(v) df[[v]])), ]
+}
+
+## #####################################################################
 # Export
 
 write_list_to_xlsx(
   list(
-    "Observed vs modelled"                         = main_results_table,
-    "Modelled results"                             = modelled_results_table,
-    "Model parameters"                             = model_params,
-    "National results"                             = results_table2_with_model,
-    "Appendix- Observed vs modelled" = obs_vs_modelled,
-    "National results - appendix" = appendix_table, 
-    "Appendix - local predictions"     = appendix_subicb
+    "Observed vs modelled"           = order_by_test(main_results_table),
+    "Modelled results"               = order_by_test(modelled_results_table),
+    "Model parameters"               = order_by_test(model_params),
+    "National results"               = order_by_test(results_table2_with_model),
+    "Appendix- Observed vs modelled" = order_by_test(obs_vs_modelled),
+    "National results - appendix"    = order_by_test(appendix_table),
+    "Appendix - local predictions"   = order_by_test(appendix_subicb, by = "NHSCode_PostMerge")
   ),
-  path = file.path(output,paste0(run_label,"_all_results_combined3.xlsx"))
+  path = file.path(output, paste0(run_label, "_all_results_combined3.xlsx"))
 )
-
 
 
 

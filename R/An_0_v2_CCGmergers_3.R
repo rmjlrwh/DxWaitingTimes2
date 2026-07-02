@@ -136,14 +136,41 @@ icb_combined_mergers <- icb_combined %>%
     .groups = "drop"
   )
 
-save(icb_combined_mergers, file = file.path(data_out,"icb_combined_mergers.RData"))
+# Remove sub iCBs from analysis that underwent changes in April 2026
+# 4 sub ICBs should be excluded
 
+# Sub ICB shut - Frimley D4U1Y
+
+# Some LSOAs from Frimley moved into new "Thames Valley " - (code appears to be U2G6B),
+# which should be excluded
+
+# Sub ICBs had LSOAs moved into them from Frimley so are bigger now
+# NHS Surrey and Sussex 92A
+# NHS Hampshire and Isle of Wight D9Y0V
+
+# Also drop 13Q - "national commissioning hub" just exists in 2021 May data
+
+# Define the list of strings to exclude
+exclude_list <- c("U2G6B", "92A", "D9Y0V", "D4U1Y", "13Q")
+
+# Filter rows where a column does NOT match any string in the list
+icb_combined_mergers <- icb_combined_mergers %>%
+  filter(!NHSCode_PostMerge %in% exclude_list)
+
+# Should be 100 sub ICBs in total?
+save(icb_combined_mergers, file = file.path(data_out,"icb_combined_mergers.RData"))
 
 ## #####################################################################
 ## Save list of unique sub-ICB codes and names 
 
+subicb2 <- icb_combined_mergers %>%
+  distinct(NHSCode_PostMerge, AreaName_PostMerge)
+
 subicb <- subicb |>
   select(NHSCode_PostMerge, AreaName_PostMerge) 
+
+# Find rows in subicb2 that are NOT in subicb = should be 0
+extras_in_subicb2 <- anti_join(subicb2, subicb, by = c("NHSCode_PostMerge", "AreaName_PostMerge"))
 
 # Save for later use
 save(subicb, file = file.path(data_out,"subicb.RData"))
