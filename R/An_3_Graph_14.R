@@ -16,8 +16,8 @@ source("R/config.R")
 # This is done by referencing the params files
 # params = main analsyis, params_sensitivity for the sensitivity analysis
 
-# source("R/params.R")  # swap to params_sensitivity.R for the sensitivity run
-source("R/params_sensitivity.R")  # swap to params_sensitivity.R for the sensitivity run
+ source("R/params.R")  # swap to params_sensitivity.R for the sensitivity run
+# source("R/params_sensitivity.R")  # swap to params_sensitivity.R for the sensitivity run
 
 
 ## #####################################################################
@@ -358,9 +358,9 @@ endo_rel_plot <-
     theme = theme(plot.title = element_text(size = 14, face = "bold", hjust = 0.5))
   )
 
-ggsave(file.path(output, "map_summary_endoscopy_plot_prev.png"), plot = endo_prob_plot_prev, width = 16, height = 10)
-ggsave(file.path(output, "map_summary_endoscopy_prob.png"),      plot = endo_prob_plot,      width = 16, height = 10)
-ggsave(file.path(output, "map_summary_endoscopy_rel.png"),       plot = endo_rel_plot,       width = 16, height = 10)
+ggsave(file.path(output, "map_summary_endoscopy_plot_prev.jpeg"), plot = endo_prob_plot_prev, width = 16, height = 10)
+ggsave(file.path(output, "map_summary_endoscopy_prob.jpeg"),      plot = endo_prob_plot,      width = 16, height = 10)
+ggsave(file.path(output, "map_summary_endoscopy_rel.jpeg"),       plot = endo_rel_plot,       width = 16, height = 10)
 
 ## ---- Imaging ------------------------------------------------------------
 
@@ -394,9 +394,9 @@ img_rel_plot <-
     theme = theme(plot.title = element_text(size = 14, face = "bold", hjust = 0.5))
   )
 
-ggsave(file.path(output, "map_summary_imaging_plot_prev.png"), plot = img_prob_plot_prev, width = 16, height = 10)
-ggsave(file.path(output, "map_summary_imaging_prob.png"),      plot = img_prob_plot,      width = 16, height = 10)
-ggsave(file.path(output, "map_summary_imaging_rel.png"),       plot = img_rel_plot,       width = 16, height = 10)
+ggsave(file.path(output, "map_summary_imaging_plot_prev.jpeg"), plot = img_prob_plot_prev, width = 16, height = 10)
+ggsave(file.path(output, "map_summary_imaging_prob.jpeg"),      plot = img_prob_plot,      width = 16, height = 10)
+ggsave(file.path(output, "map_summary_imaging_rel.jpeg"),       plot = img_rel_plot,       width = 16, height = 10)
 
 # To draw interactively:
 endo_prob_plot_prev

@@ -160,8 +160,8 @@ trend_plot_6weeks_natural
 trend_plot_6weeks_log
 
 # Save plots
-ggsave(file.path(output,"trend_plot_6weeks_natural.png"), plot = trend_plot_6weeks_natural, width = 3000, height = 4000, units = "px")
-ggsave(file.path(output,"trend_plot_6weeks_log.png"), plot = trend_plot_6weeks_log, width = 3000, height = 4000, units = "px")
+ggsave(file.path(output,"trend_plot_6weeks_natural.jpeg"), plot = trend_plot_6weeks_natural, width = 3000, height = 4000, units = "px")
+ggsave(file.path(output,"trend_plot_6weeks_log.jpeg"), plot = trend_plot_6weeks_log, width = 3000, height = 4000, units = "px")
 
 # Save dataset for reuse in later code
 save(icb_combined_mergers_alldx, file = file.path(data_out,"icb_combined_mergers_alldx.RData"))

@@ -17,8 +17,8 @@ source("R/config.R")
 # This is done by referencing the params files
 # params = main analsyis, params_sensitivity for the sensitivity analysis
 
-# source("R/params.R")  # swap to params_sensitivity.R for the sensitivity run
- source("R/params_sensitivity.R")  # swap to params_sensitivity.R for the sensitivity run
+ source("R/params.R")  # swap to params_sensitivity.R for the sensitivity run
+# source("R/params_sensitivity.R")  # swap to params_sensitivity.R for the sensitivity run
 
 
 ## #####################################################################
